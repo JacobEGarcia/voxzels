@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VoxZels - 3-view voxel builder</title>
+<link href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{--cream:#f4efe6;--paper:#efe8da;--ink:#1a1815;--ink2:#4a453c;--amber:#e8a317;}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--cream);color:var(--ink);font-family:'IBM Plex Mono',monospace;font-size:13px}
+header{display:flex;align-items:baseline;gap:14px;padding:10px 14px;border-bottom:2px solid var(--ink);background:var(--paper)}
+h1{font-family:'Silkscreen',monospace;font-size:18px}
+header .sub{color:var(--ink2);font-size:11px}
+#app{display:flex;height:calc(100vh - 49px)}
+#left{width:280px;border-right:2px solid var(--ink);background:var(--paper);padding:12px;overflow-y:auto}
+#mid{padding:12px;overflow:auto}
+#view3d{flex:1;position:relative;min-width:300px;border-left:2px solid var(--ink)}
+#view3d canvas{display:block;width:100%;height:100%}
+.section{border:2px solid var(--ink);background:#fff;padding:10px;margin-bottom:12px}
+.section h2{font-family:'Silkscreen',monospace;font-size:11px;margin-bottom:8px}
+.row{display:flex;justify-content:space-between;align-items:center;margin:6px 0;gap:6px}
+select,button{font-family:'IBM Plex Mono',monospace;font-size:12px;border:2px solid var(--ink);background:#fff;padding:4px 8px;cursor:pointer}
+button:hover,select:hover{background:var(--amber)}
+button.on{background:var(--amber)}
+button.primary{background:var(--amber);font-weight:600}
+.tools{display:grid;grid-template-columns:1fr 1fr;gap:5px}
+#swatches{display:grid;grid-template-columns:repeat(8,1fr);gap:3px;margin:8px 0}
+#swatches div{width:100%;aspect-ratio:1;border:2px solid var(--ink);cursor:pointer}
+#swatches div.sel{outline:3px solid var(--amber)}
+.proj{border:2px solid var(--ink);background:#fff;margin-bottom:10px}
+.proj h3{font-family:'Silkscreen',monospace;font-size:10px;padding:4px 8px;background:var(--paper);border-bottom:2px solid var(--ink);display:flex;justify-content:space-between;align-items:center}
+.proj h3 button{font-size:10px;padding:2px 6px}
+.proj canvas{display:block;width:100%;image-rendering:pixelated;cursor:crosshair;touch-action:none}
+.note{font-size:10px;color:var(--ink2);line-height:1.5;margin-top:8px}
+a{color:var(--ink)}
+#hud{position:absolute;left:10px;top:10px;font-family:'Silkscreen',monospace;font-size:10px;background:var(--paper);border:2px solid var(--ink);padding:4px 8px;pointer-events:none}
+</style>
+</head>
+<body>
+<header><h1>VoxZels</h1><span class="sub">Draw front / side / top pixel projections. The solid is their intersection. Orbit the 3D result on the right.</span></header>
+<div id="app">
+  <div id="left">
+    <div class="section">
+      <h2>SETUP</h2>
+      <div class="row"><label>Grid size</label>
+        <select id="gsize"><option>16</option><option selected>24</option><option>32</option></select></div>
+      <div class="row"><label>Symmetry</label>
+        <select id="sym"><option value="none">None</option><option value="x" selected>Mirror X</option><option value="z">Mirror Z</option></select></div>
+    </div>
+    <div class="section">
+      <h2>TOOLS</h2>
+      <div class="tools">
+        <button data-tool="pen" class="on">Pencil</button>
+        <button data-tool="erase">Eraser</button>
+        <button data-tool="fill">Fill</button>
+        <button data-tool="pick">Picker</button>
+      </div>
+      <div id="swatches"></div>
+      <input type="color" id="custom" value="#ff004d" style="width:100%;height:28px;border:2px solid var(--ink)">
+    </div>
+    <div class="section">
+      <h2>IMPORT IMAGES</h2>
+      <div class="row"><label>Front</label><button data-imp="front">Browse</button></div>
+      <div class="row"><label>Side</label><button data-imp="side">Browse</button></div>
+      <div class="row"><label>Top</label><button data-imp="top">Browse</button></div>
+      <input type="file" id="imp" accept="image/*" style="display:none">
+      <div class="note">Pixel art imports quantize to the palette. Non-empty pixels count as solid.</div>
+    </div>
+    <div class="section">
+      <h2>EXPORT</h2>
+      <div class="tools">
+        <button class="primary" id="expng">PNG snapshot</button>
+        <button id="exobj">OBJ model</button>
+        <button id="exjson">JSON data</button>
+        <button id="sample">Sample car</button>
+      </div>
+      <div class="note">Sister tools: <a href="https://jacobegarcia.github.io/pixelizer/">Pixelizer</a> - <a href="https://jacobegarcia.github.io/texel-studio/">Texel Studio</a>. Runs fully local. No upload, no account.</div>
+    </div>
+  </div>
+  <div id="mid">
+    <div class="proj"><h3>FRONT (x / y)</h3><canvas id="c-front"></canvas></div>
+    <div class="proj"><h3>SIDE (z / y)</h3><canvas id="c-side"></canvas></div>
+    <div class="proj"><h3>TOP (x / z)</h3><canvas id="c-top"></canvas></div>
+  </div>
+  <div id="view3d"><div id="hud">VOXEL PREVIEW</div></div>
+</div>
+<script type="importmap">
+{"imports":{"three":"https://unpkg.com/three@0.164.1/build/three.module.js","three/addons/":"https://unpkg.com/three@0.164.1/examples/jsm/"}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+
+const PAL=['#1a1815','#5F574F','#C2C3C7','#FFF1E8','#1D2B53','#29ADFF','#7E2553','#FF004D','#AB5236','#FFA300','#008751','#00E436','#e07a3a','#f2e3c9','#83769C','#FF77A8'];
+let N=24, tool='pen', cur=1; // cur = palette index, 0 stays ink
+const PAL0=PAL.slice();
+let grids={front:[],side:[],top:[]};
+function blank(){return Array.from({length:N},()=>new Array(N).fill(-1));}
+function resetGrids(){grids={front:blank(),side:blank(),top:blank()};}
+
+// ---------- 2D projection canvases ----------
+const canvases={};
+function setupCanvas(name){
+  const c=document.getElementById('c-'+name);
+  c.width=N;c.height=N;
+  canvases[name]=c;
+}
+function drawGrid(name){
+  const c=canvases[name],x=c.getContext('2d'),g=grids[name];
+  x.imageSmoothingEnabled=false;
+  x.fillStyle='#e5ddcc';x.fillRect(0,0,N,N);
+  for(let i=0;i<N;i++)for(let j=0;j<N;j++){
+    if(g[j][i]>=0){x.fillStyle=PAL[g[j][i]];x.fillRect(i,j,1,1);}
+  }
+}
+function drawAll(){['front','side','top'].forEach(drawGrid);}
+// mapping: front[i(col)=x, j(row) -> y=N-1-j]; side[col=z, row=y]; top[col=x, row=z -> z=N-1-j]
+function setVoxelInGrid(name,col,row,val){
+  const g=grids[name];
+  const put=(c,r)=>{if(c>=0&&c<N&&r>=0&&r<N)g[r][c]=val;};
+  put(col,row);
+  const sym=document.getElementById('sym').value;
+  if(sym==='x'&&name!=='side')put(N-1-col,row);
+  if(sym==='z'&&name!=='front')put(N-1-col,row);
+}
+let painting=false;
+function canvasPos(e,c){
+  const r=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX),cy=(e.touches?e.touches[0].clientY:e.clientY);
+  return [Math.floor((cx-r.left)/r.width*N),Math.floor((cy-r.top)/r.height*N)];
+}
+function flood(g,c,r,from,to){
+  if(from===to)return;const st=[[c,r]];const seen=new Set();
+  while(st.length){const [x,y]=st.pop();const k=x+','+y;
+    if(x<0||y<0||x>=N||y>=N||seen.has(k)||g[y][x]!==from)continue;
+    seen.add(k);g[y][x]=to;st.push([x+1,y],[x-1,y],[x,y+1],[x,y-1]);}
+}
+for(const name of ['front','side','top']){
+  setupCanvas(name);
+  const c=canvases[name];
+  const act=(e)=>{
+    const [col,row]=canvasPos(e,c);
+    if(tool==='pen')setVoxelInGrid(name,col,row,cur);
+    else if(tool==='erase')setVoxelInGrid(name,col,row,-1);
+    else if(tool==='fill'){flood(grids[name],col,row,grids[name][row]?.[col],cur);}
+    else if(tool==='pick'){const v=grids[name][row]?.[col];if(v>=0){cur=v;markSwatch();}}
+    drawGrid(name);scheduleRebuild();
+  };
+  c.addEventListener('pointerdown',e=>{painting=true;act(e);c.setPointerCapture(e.pointerId);});
+  c.addEventListener('pointermove',e=>{if(painting&&(tool==='pen'||tool==='erase'))act(e);});
+  c.addEventListener('pointerup',()=>painting=false);
+}
+// tools
+document.querySelectorAll('[data-tool]').forEach(b=>b.addEventListener('click',()=>{
+  tool=b.dataset.tool;
+  document.querySelectorAll('[data-tool]').forEach(x=>x.classList.toggle('on',x===b));
+}));
+// swatches
+const sw=document.getElementById('swatches');
+PAL.forEach((h,i)=>{const d=document.createElement('div');d.style.background=h;d.title=h;
+  d.addEventListener('click',()=>{cur=i;markSwatch();});sw.appendChild(d);});
+function markSwatch(){[...sw.children].forEach((d,i)=>d.classList.toggle('sel',i===cur));}
+markSwatch();
+document.getElementById('custom').addEventListener('input',e=>{
+  PAL[0]=e.target.value;cur=0;markSwatch();drawAll();scheduleRebuild();
+});
+document.getElementById('gsize').addEventListener('change',e=>{
+  N=+e.target.value;resetGrids();for(const n of ['front','side','top'])setupCanvas(n);drawAll();rebuild();
+});
+// import images
+let impTarget=null;
+document.querySelectorAll('[data-imp]').forEach(b=>b.addEventListener('click',()=>{impTarget=b.dataset.imp;document.getElementById('imp').click();}));
+document.getElementById('imp').addEventListener('change',e=>{
+  const f=e.target.files[0];if(!f||!impTarget)return;
+  const img=new Image();img.onload=()=>{
+    const c=document.createElement('canvas');c.width=N;c.height=N;
+    const x=c.getContext('2d');x.imageSmoothingEnabled=false;
+    x.drawImage(img,0,0,N,N);
+    const d=x.getImageData(0,0,N,N).data,g=grids[impTarget];
+    for(let j=0;j<N;j++)for(let i=0;i<N;i++){
+      const o=(j*N+i)*4;if(d[o+3]<128){g[j][i]=-1;continue;}
+      let bi=0,bd=1e9;
+      PAL.forEach((h,pi)=>{const n=parseInt(h.slice(1),16);
+        const dr=d[o]-(n>>16&255),dg=d[o+1]-(n>>8&255),db=d[o+2]-(n&255);
+        const dist=dr*dr+dg*dg+db*db;if(dist<bd){bd=dist;bi=pi;}});
+      g[j][i]=bi;
+    }
+    drawGrid(impTarget);rebuild();
+  };img.src=URL.createObjectURL(f);
+});
+
+// ---------- 3D ----------
+const holder=document.getElementById('view3d');
+const renderer=new THREE.WebGLRenderer({antialias:true,preserveDrawingBuffer:true});
+holder.appendChild(renderer.domElement);
+const scene=new THREE.Scene();scene.background=new THREE.Color(0xf4efe6);
+const camera=new THREE.PerspectiveCamera(45,1,0.1,200);
+camera.position.set(26,20,30);
+const controls=new OrbitControls(camera,renderer.domElement);
+controls.enableDamping=true;controls.target.set(0,6,0);
+scene.add(new THREE.AmbientLight(0xffffff,1.2));
+const sun=new THREE.DirectionalLight(0xffffff,1.6);sun.position.set(20,30,15);scene.add(sun);
+const gridH=new THREE.GridHelper(40,20,0xc9c0ad,0xd9d1bf);scene.add(gridH);
+let inst=null;
+const cubeGeo=new THREE.BoxGeometry(1,1,1);
+const cubeMat=new THREE.MeshLambertMaterial({color:0xffffff});
+function rebuild(){
+  // voxel[x][y][z]: front[x][y]=grids.front[N-1-y][x]; side[z][y]=grids.side[N-1-y][z]; top[x][z]=grids.top[N-1-z][x]
+  const vox=[];
+  for(let x=0;x<N;x++)for(let y=0;y<N;y++)for(let z=0;z<N;z++){
+    const f=grids.front[N-1-y][x],s=grids.side[N-1-y][z],t=grids.top[N-1-z][x];
+    if(f>=0&&s>=0&&t>=0)vox.push([x,y,z,f>=0?f:(s>=0?s:t)]);
+  }
+  if(inst){scene.remove(inst);inst.dispose();inst=null;}
+  if(!vox.length){render3d();return;}
+  inst=new THREE.InstancedMesh(cubeGeo,cubeMat,vox.length);
+  const m=new THREE.Matrix4(),col=new THREE.Color();
+  vox.forEach(([x,y,z,ci],i)=>{
+    m.setPosition(x-N/2+0.5,y+0.5,z-N/2+0.5);inst.setMatrixAt(i,m);
+    inst.setColorAt(i,col.set(PAL[ci]));
+  });
+  inst.instanceColor.needsUpdate=true;
+  scene.add(inst);
+  controls.target.set(0,N/4,0);
+  camera.position.set(N*1.1,N*0.8,N*1.3);
+  render3d();
+}
+let rebuildTimer=null;
+function scheduleRebuild(){clearTimeout(rebuildTimer);rebuildTimer=setTimeout(rebuild,250);}
+function render3d(){
+  const w=holder.clientWidth,h=holder.clientHeight;
+  renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix();
+  renderer.render(scene,camera);
+}
+(function loop(){controls.update();render3d();requestAnimationFrame(loop);})();
+window.addEventListener('resize',render3d);
+
+// sample: little car
+function sampleCar(){
+  resetGrids();
+  const F=grids.front,S=grids.side,T=grids.top,mid=Math.floor(N/2);
+  // front: car silhouette facing viewer: width 12, height 7, bottom at row N-1
+  const fw=6,fh=3,cab=2;
+  for(let j=0;j<fh+1;j++)for(let i=-fw;i<=fw;i++){F[N-1-j][mid+i]= j===0?8:(Math.abs(i)>4&&j<2?8:12);}
+  for(let j=fh+1;j<fh+1+cab;j++)for(let i=-3;i<=3;i++){F[N-1-j][mid+i]= (j===fh+1+cab-1&&Math.abs(i)<3)?5:12;}
+  // wheels on front
+  F[N-1][mid-4]=0;F[N-1][mid+4]=0;
+  // side: length 16
+  const sl=8;
+  for(let j=0;j<fh+1;j++)for(let i=-sl;i<=sl;i++){S[N-1-j][mid+i]= j===0?8:12;}
+  for(let j=fh+1;j<fh+1+cab;j++)for(let i=-4;i<=2;i++){S[N-1-j][mid+i]= (j===fh+1+cab-1)?5:12;}
+  S[N-1][mid-5]=0;S[N-1][mid+5]=0;
+  // top: rectangle footprint
+  for(let r=-sl;r<=sl;r++)for(let i=-fw;i<=fw;i++){T[mid+r][mid+i]=12;}
+  for(let r=-4;r<=2;r++)for(let i=-3;i<=3;i++){T[mid+r][mid+i]=5;}
+  drawAll();rebuild();
+}
+document.getElementById('sample').addEventListener('click',sampleCar);
+
+// exports
+document.getElementById('expng').addEventListener('click',()=>{
+  render3d();renderer.domElement.toBlob(b=>{const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='voxzels-'+Date.now()+'.png';a.click();});
+});
+document.getElementById('exjson').addEventListener('click',()=>{
+  const data={grid:N,front:grids.front,side:grids.side,top:grids.top,palette:PAL};
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(data)],{type:'application/json'}));a.download='voxzels-'+Date.now()+'.json';a.click();
+});
+document.getElementById('exobj').addEventListener('click',()=>{
+  const lines=['# VoxZels export'];let vc=0;
+  for(let x=0;x<N;x++)for(let y=0;y<N;y++)for(let z=0;z<N;z++){
+    const f=grids.front[N-1-y][x],s=grids.side[N-1-y][z],t=grids.top[N-1-z][x];
+    if(!(f>=0&&s>=0&&t>=0))continue;
+    const X=x-N/2,Y=y,Z=z-N/2;
+    for(const [vx,vy,vz] of [[X,Y,Z],[X+1,Y,Z],[X+1,Y+1,Z],[X,Y+1,Z],[X,Y,Z+1],[X+1,Y,Z+1],[X+1,Y+1,Z+1],[X,Y+1,Z+1]])
+      lines.push(`v ${vx} ${vy} ${vz}`);
+    const b=vc;vc+=8;
+    for(const f2 of [[1,2,3,4],[5,6,7,8],[1,2,6,5],[3,4,8,7],[1,4,8,5],[2,3,7,6]])
+      lines.push('f '+f2.map(i=>b+i).join(' '));
+  }
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([lines.join('\n')],{type:'text/plain'}));a.download='voxzels-'+Date.now()+'.obj';a.click();
+});
+resetGrids();drawAll();sampleCar();
+</script>
+</body>
+</html>
